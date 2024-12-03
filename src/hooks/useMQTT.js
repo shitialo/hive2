@@ -60,23 +60,29 @@ export const useMQTT = (brokerUrl, username, password, topic) => {
       });
 
       mqttClient.on('message', (receivedTopic, message) => {
-        console.log('Received message on topic:', receivedTopic);
-        console.log('Message:', message.toString());
-        
         try {
           const parsedData = JSON.parse(message.toString());
+          console.log('Received data:', parsedData);
           
-          // Update current readings with all sensor data
-          setCurrentReadings(parsedData);
+          // Ensure timestamp is in milliseconds
+          const timestamp = parsedData.timestamp * (parsedData.timestamp < 1000000000000 ? 1000 : 1);
           
-          // Add timestamp and update historical data
+          // Create data point with proper timestamp
+          const dataPoint = {
+            ...parsedData,
+            timestamp,
+          };
+          
+          // Update current readings
+          setCurrentReadings(dataPoint);
+          
+          // Update historical data
           setData(prevData => {
-            const newData = [...prevData, {
-              ...parsedData,
-              timestamp: parsedData.timestamp || Date.now(),
-            }];
-            return newData.slice(-100); // Keep last 100 readings
+            const newData = [...prevData, dataPoint];
+            // Keep last 1000 readings
+            return newData.slice(-1000).sort((a, b) => a.timestamp - b.timestamp);
           });
+          
         } catch (err) {
           console.error('Error parsing message:', err);
           setError('Failed to parse sensor data');
