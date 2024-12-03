@@ -16,6 +16,7 @@ function App() {
   const [currentTemp, setCurrentTemp] = useState(null);
   const [currentHumidity, setCurrentHumidity] = useState(null);
   const [client, setClient] = useState(null);
+  const [isConnected, setIsConnected] = useState(false);
 
   useEffect(() => {
     // MQTT Connection setup
@@ -48,12 +49,23 @@ function App() {
 
     setClient(mqttClient);
 
+    // Cleanup function to disconnect MQTT client
     return () => {
       if (mqttClient) {
+        console.log('Disconnecting MQTT client');
         mqttClient.end();
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (client) {
+      setIsConnected(client.connected);
+      client.on('connect', () => setIsConnected(true));
+      client.on('disconnect', () => setIsConnected(false));
+      client.on('offline', () => setIsConnected(false));
+    }
+  }, [client]);
 
   return (
     <ThemeProvider theme={darkTheme}>
@@ -83,6 +95,18 @@ function App() {
                 </Typography>
                 <Typography variant="h3">
                   {currentHumidity ? `${currentHumidity.toFixed(1)}%` : '--'}
+                </Typography>
+              </Paper>
+            </Grid>
+
+            {/* Connection Status */}
+            <Grid item xs={12}>
+              <Paper sx={{ p: 2 }}>
+                <Typography variant="h6" gutterBottom>
+                  MQTT Connection Status
+                </Typography>
+                <Typography variant="h3">
+                  {isConnected ? 'Connected' : 'Disconnected'}
                 </Typography>
               </Paper>
             </Grid>
