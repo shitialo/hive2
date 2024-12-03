@@ -89,6 +89,8 @@ unsigned long lastpHCheckTime = 0;
 unsigned long lastReservoirCheckTime = 0;
 unsigned long lastRotationTime = 0;
 unsigned long lastPublishTime = 0;
+unsigned long lastReadTime = 0;
+int currentPosition = 0;
 
 bool isVPDPumping = false;
 bool isPHAdjusting = false;
@@ -106,6 +108,10 @@ float PH_TARGET = 6.0;
 void setup() {
   Serial.begin(115200);
   Wire.begin(41, 42);
+  delay(2000);  // Give time for Serial to initialize
+  
+  // Initialize random for client ID generation
+  randomSeed(micros());
   
   // Initialize pins
   pinMode(VPD_PUMP_RELAY, OUTPUT);
@@ -114,88 +120,241 @@ void setup() {
   pinMode(MIX_PUMP_RELAY, OUTPUT);
   pinMode(TRIG_PIN, OUTPUT);
   pinMode(ECHO_PIN, INPUT);
+  pinMode(LDR_PIN, INPUT);
   
+  // Initialize all relays to OFF
   digitalWrite(VPD_PUMP_RELAY, LOW);
   digitalWrite(ACID_PUMP_RELAY, LOW);
   digitalWrite(BASE_PUMP_RELAY, LOW);
-  digitalWrite(MIX_PUMP_RELAY, HIGH);
+  digitalWrite(MIX_PUMP_RELAY, LOW);
   
-  // Initialize SHT31
+  // Initialize SHT31 sensor
   if (!sht31.begin(0x44)) {
-    Serial.println("Couldn't find SHT31");
+    Serial.println("Couldn't find SHT31 sensor!");
     while (1) delay(1);
   }
+  Serial.println("SHT31 sensor initialized");
   
-  // Initialize stepper
+  // Initialize stepper motor
   stepper.setMaxSpeed(1000);
   stepper.setAcceleration(500);
-
-  // Initialize ADC
-  analogReadResolution(12);
-
-  // Configure SSL and MQTT
+  Serial.println("Stepper initialized");
+  
+  // Setup WiFi security
   espClient.setCACert(root_ca);
-  client.setServer(mqtt_server, mqtt_port);
   
   // Connect to WiFi
   connectToWiFi();
+  
+  // Setup MQTT
+  client.setServer(mqtt_server, mqtt_port);
+  client.setKeepAlive(60);  // Set keepalive to 60 seconds
+  
+  // Set the buffer sizes
+  client.setBufferSize(512);  // Increase buffer size if needed
+  
+  Serial.println("Setup complete!");
+  Serial.printf("MQTT Server: %s\n", mqtt_server);
+  Serial.printf("MQTT Port: %d\n", mqtt_port);
 }
 
 void loop() {
-  if (!client.connected()) {
-    reconnectMQTT();
-  }
-  client.loop();
-
   unsigned long currentTime = millis();
   
-  // Read all sensors
-  readSensors();
+  if (!client.connected()) {
+    Serial.println("MQTT disconnected, reconnecting...");
+    reconnectMQTT();
+  }
   
-  // Control systems
+  // Process any incoming messages
+  client.loop();
+  
+  // Read and publish sensor data every 5 seconds
+  if (currentTime - lastReadTime >= 5000) {
+    readSensors();
+    publishData();  // Separated publish from readSensors
+    lastReadTime = currentTime;
+  }
+  
+  // Handle VPD control
   handleVPDControl(currentTime);
+  
+  // Handle pH control
   handlePHControl(currentTime);
-  checkReservoirVolume(currentTime);
+  
+  // Check light levels and rotate if needed
   checkLightAndRotate(currentTime);
   
-  // Run stepper if needed
-  stepper.run();
-  
-  // Publish data every 5 seconds
-  if (currentTime - lastPublishTime >= 5000) {
-    publishData();
-    lastPublishTime = currentTime;
-  }
+  // Check reservoir volume
+  checkReservoirVolume(currentTime);
 }
 
 void readSensors() {
-  temperature = sht31.readTemperature();
-  humidity = sht31.readHumidity();
-  vpd = calculateVPD(temperature, humidity);
-  pH = readpH();
-  waterLevel = measureWaterLevel();
-  reservoirVolume = calculateReservoirVolume(waterLevel);
-  lightIntensity = analogRead(LDR_PIN);
+  Serial.println("\n--- Reading Sensors ---");
+  
+  // Read temperature and humidity from SHT31
+  float temperature = sht31.readTemperature();
+  float humidity = sht31.readHumidity();
+  
+  if (isnan(temperature) || isnan(humidity)) {
+    Serial.println("Failed to read from SHT31 sensor!");
+    return;
+  }
+  
+  Serial.printf("Temperature: %.2f°C\n", temperature);
+  Serial.printf("Humidity: %.2f%%\n", humidity);
+  
+  // Calculate VPD
+  float vpd = calculateVPD(temperature, humidity);
+  Serial.printf("VPD: %.2f kPa\n", vpd);
+  
+  // Read pH
+  float ph = readpH();
+  Serial.printf("pH: %.2f\n", ph);
+  
+  // Measure water level and calculate volume
+  float waterLevel = measureWaterLevel();
+  float reservoirVolume = calculateReservoirVolume(waterLevel);
+  Serial.printf("Water Level: %.2f cm\n", waterLevel);
+  Serial.printf("Reservoir Volume: %.2f L\n", reservoirVolume);
+  
+  // Read light intensity
+  int lightIntensity = analogRead(LDR_PIN);
+  Serial.printf("Light Intensity: %d\n", lightIntensity);
 }
 
 void publishData() {
-  StaticJsonDocument<512> doc;
-  
+  if (!client.connected()) {
+    Serial.println("MQTT disconnected, reconnecting...");
+    reconnectMQTT();
+    if (!client.connected()) {
+      Serial.println("Failed to reconnect to MQTT!");
+      return;
+    }
+  }
+
+  // Create JSON document
+  StaticJsonDocument<256> doc;
+  doc["timestamp"] = millis();
   doc["temperature"] = temperature;
   doc["humidity"] = humidity;
   doc["vpd"] = vpd;
-  doc["pH"] = pH;
+  doc["ph"] = pH;
   doc["waterLevel"] = waterLevel;
   doc["reservoirVolume"] = reservoirVolume;
   doc["lightIntensity"] = lightIntensity;
-  doc["isVPDPumping"] = isVPDPumping;
-  doc["isPHAdjusting"] = isPHAdjusting;
-  doc["timestamp"] = millis();
+  doc["vpdPumpRunning"] = digitalRead(VPD_PUMP_RELAY) == HIGH;
+  doc["phAdjusting"] = (digitalRead(ACID_PUMP_RELAY) == HIGH || digitalRead(BASE_PUMP_RELAY) == HIGH);
+
+  // Serialize and publish
+  char buffer[256];
+  serializeJson(doc, buffer);
   
-  String jsonString;
-  serializeJson(doc, jsonString);
+  Serial.println("Attempting to publish data:");
+  Serial.println(buffer);
   
-  client.publish(mqtt_topic, jsonString.c_str());
+  if (client.publish(mqtt_topic, buffer, true)) {  // Added retained flag
+    Serial.println("Data published successfully");
+    Serial.printf("Message size: %d bytes\n", strlen(buffer));
+  } else {
+    Serial.println("Failed to publish data!");
+    Serial.printf("MQTT state: %d\n", client.state());
+  }
+}
+
+float calculateVPD(float temperature, float humidity) {
+  // VPD calculation
+  float es = 0.6108 * exp((17.27 * temperature) / (temperature + 237.3));
+  float ea = (humidity / 100.0) * es;
+  return es - ea;
+}
+
+float readpH() {
+  // Read pH sensor (analog value)
+  float voltage = analogRead(PH_PIN) * 3.3 / 4095.0;
+  // Convert voltage to pH (calibration needed)
+  return 7.0 + ((2.5 - voltage) / 0.18);
+}
+
+float measureWaterLevel() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  
+  long duration = pulseIn(ECHO_PIN, HIGH);
+  float distance = duration * 0.034 / 2;
+  
+  // Convert distance to water level (assuming sensor is at top)
+  return RESERVOIR_HEIGHT - distance;
+}
+
+float calculateReservoirVolume(float waterLevel) {
+  // Calculate volume of cylinder (πr²h)
+  return PI * pow(RESERVOIR_RADIUS, 2) * waterLevel / 1000.0; // Convert to liters
+}
+
+void handleVPDControl(unsigned long currentTime) {
+  if (currentTime - lastVPDCycleTime >= vpdCycleInterval * 1000) {
+    float vpd = calculateVPD(sht31.readTemperature(), sht31.readHumidity());
+    Serial.printf("VPD Check: %.2f kPa\n", vpd);
+    
+    if (vpd > 1.2) {
+      Serial.println("VPD too high, activating misting...");
+      digitalWrite(VPD_PUMP_RELAY, HIGH);
+      delay(VPD_PUMP_DURATION);
+      digitalWrite(VPD_PUMP_RELAY, LOW);
+      Serial.println("Misting complete");
+    }
+    
+    lastVPDCycleTime = currentTime;
+  }
+}
+
+void handlePHControl(unsigned long currentTime) {
+  if (currentTime - lastpHCheckTime >= PH_CHECK_INTERVAL) {
+    float ph = readpH();
+    Serial.printf("pH Check: %.2f\n", ph);
+    
+    if (ph < PH_LOWER_LIMIT) {
+      Serial.println("pH too low, adding base...");
+      digitalWrite(BASE_PUMP_RELAY, HIGH);
+      delay(PH_WAIT_INTERVAL);
+      digitalWrite(BASE_PUMP_RELAY, LOW);
+    } else if (ph > PH_UPPER_LIMIT) {
+      Serial.println("pH too high, adding acid...");
+      digitalWrite(ACID_PUMP_RELAY, HIGH);
+      delay(PH_WAIT_INTERVAL);
+      digitalWrite(ACID_PUMP_RELAY, LOW);
+    }
+    
+    // Run mix pump
+    Serial.println("Running mix pump...");
+    digitalWrite(MIX_PUMP_RELAY, HIGH);
+    delay(MIX_PUMP_DURATION);
+    digitalWrite(MIX_PUMP_RELAY, LOW);
+    Serial.println("Mixing complete");
+    
+    lastpHCheckTime = currentTime;
+  }
+}
+
+void checkLightAndRotate(unsigned long currentTime) {
+  if (currentTime - lastRotationTime >= ROTATION_INTERVAL) {
+    int lightLevel = analogRead(LDR_PIN);
+    
+    if (lightLevel < 500) { // Threshold for low light
+      // Rotate 90 degrees
+      stepper.moveTo(currentPosition + STEPS_90_DEGREES);
+      while (stepper.distanceToGo() != 0) {
+        stepper.run();
+      }
+      currentPosition = stepper.currentPosition();
+    }
+    
+    lastRotationTime = currentTime;
+  }
 }
 
 void connectToWiFi() {
@@ -212,58 +371,43 @@ void connectToWiFi() {
 }
 
 void reconnectMQTT() {
-  while (!client.connected()) {
+  int retries = 0;
+  while (!client.connected() && retries < 3) {
     Serial.print("Attempting MQTT connection...");
-    String clientId = "ESP32Client-" + String(random(0xffff), HEX);
+    
+    // Create a random client ID
+    String clientId = "ESP32Client-";
+    clientId += String(random(0xffff), HEX);
+    
+    // Attempt to connect with credentials
     if (client.connect(clientId.c_str(), mqtt_username, mqtt_password)) {
       Serial.println("connected");
+      
+      // Subscribe to any control topics if needed
+      // client.subscribe("hydroponic/control");
+      
+      // Publish a connection message
+      StaticJsonDocument<128> doc;
+      doc["status"] = "connected";
+      doc["id"] = clientId;
+      char buffer[128];
+      serializeJson(doc, buffer);
+      
+      if (client.publish("hydroponic/status", buffer)) {
+        Serial.println("Connection status published");
+      } else {
+        Serial.println("Failed to publish connection status");
+      }
     } else {
       Serial.print("failed, rc=");
       Serial.print(client.state());
       Serial.println(" retrying in 5 seconds");
+      retries++;
       delay(5000);
     }
   }
 }
 
-float calculateVPD(float temperature, float humidity) {
-  float es = 0.6108 * exp(17.27 * temperature / (temperature + 237.3));
-  float ea = es * (humidity / 100.0);
-  return es - ea;
-}
-
-float readpH() {
-  int sensorValue = analogRead(PH_PIN);
-  return map(sensorValue, 0, 4095, 0, 14);
-}
-
-float measureWaterLevel() {
-  digitalWrite(TRIG_PIN, LOW);
-  delayMicroseconds(2);
-  digitalWrite(TRIG_PIN, HIGH);
-  delayMicroseconds(10);
-  digitalWrite(TRIG_PIN, LOW);
-  
-  long duration = pulseIn(ECHO_PIN, HIGH);
-  return duration * 0.034 / 2;
-}
-
-float calculateReservoirVolume(float waterLevel) {
-  return PI * pow(RESERVOIR_RADIUS, 2) * waterLevel;
-}
-
-void handleVPDControl(unsigned long currentTime) {
-  // Implement VPD control logic here
-}
-
-void handlePHControl(unsigned long currentTime) {
-  // Implement pH control logic here
-}
-
 void checkReservoirVolume(unsigned long currentTime) {
   // Implement reservoir volume check logic here
-}
-
-void checkLightAndRotate(unsigned long currentTime) {
-  // Implement light check and rotation logic here
 }
