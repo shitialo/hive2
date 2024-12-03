@@ -172,7 +172,6 @@ void loop() {
   // Read and publish sensor data every 5 seconds
   if (currentTime - lastReadTime >= 5000) {
     readSensors();
-    publishData();  // Separated publish from readSensors
     lastReadTime = currentTime;
   }
   
@@ -193,8 +192,8 @@ void readSensors() {
   Serial.println("\n--- Reading Sensors ---");
   
   // Read temperature and humidity from SHT31
-  float temperature = sht31.readTemperature();
-  float humidity = sht31.readHumidity();
+  temperature = sht31.readTemperature();
+  humidity = sht31.readHumidity();
   
   if (isnan(temperature) || isnan(humidity)) {
     Serial.println("Failed to read from SHT31 sensor!");
@@ -205,34 +204,23 @@ void readSensors() {
   Serial.printf("Humidity: %.2f%%\n", humidity);
   
   // Calculate VPD
-  float vpd = calculateVPD(temperature, humidity);
+  vpd = calculateVPD(temperature, humidity);
   Serial.printf("VPD: %.2f kPa\n", vpd);
   
   // Read pH
-  float ph = readpH();
-  Serial.printf("pH: %.2f\n", ph);
+  pH = readpH();
+  Serial.printf("pH: %.2f\n", pH);
   
   // Measure water level and calculate volume
-  float waterLevel = measureWaterLevel();
-  float reservoirVolume = calculateReservoirVolume(waterLevel);
+  waterLevel = measureWaterLevel();
+  reservoirVolume = calculateReservoirVolume(waterLevel);
   Serial.printf("Water Level: %.2f cm\n", waterLevel);
   Serial.printf("Reservoir Volume: %.2f L\n", reservoirVolume);
   
   // Read light intensity
-  int lightIntensity = analogRead(LDR_PIN);
+  lightIntensity = analogRead(LDR_PIN);
   Serial.printf("Light Intensity: %d\n", lightIntensity);
-}
-
-void publishData() {
-  if (!client.connected()) {
-    Serial.println("MQTT disconnected, reconnecting...");
-    reconnectMQTT();
-    if (!client.connected()) {
-      Serial.println("Failed to reconnect to MQTT!");
-      return;
-    }
-  }
-
+  
   // Create JSON document
   StaticJsonDocument<256> doc;
   doc["timestamp"] = millis();
@@ -245,7 +233,7 @@ void publishData() {
   doc["lightIntensity"] = lightIntensity;
   doc["vpdPumpRunning"] = digitalRead(VPD_PUMP_RELAY) == HIGH;
   doc["phAdjusting"] = (digitalRead(ACID_PUMP_RELAY) == HIGH || digitalRead(BASE_PUMP_RELAY) == HIGH);
-
+  
   // Serialize and publish
   char buffer[256];
   serializeJson(doc, buffer);
@@ -255,25 +243,27 @@ void publishData() {
   
   if (client.publish(mqtt_topic, buffer, true)) {  // Added retained flag
     Serial.println("Data published successfully");
-    Serial.printf("Message size: %d bytes\n", strlen(buffer));
   } else {
     Serial.println("Failed to publish data!");
-    Serial.printf("MQTT state: %d\n", client.state());
   }
-}
-
-float calculateVPD(float temperature, float humidity) {
-  // VPD calculation
-  float es = 0.6108 * exp((17.27 * temperature) / (temperature + 237.3));
-  float ea = (humidity / 100.0) * es;
-  return es - ea;
 }
 
 float readpH() {
   // Read pH sensor (analog value)
-  float voltage = analogRead(PH_PIN) * 3.3 / 4095.0;
-  // Convert voltage to pH (calibration needed)
-  return 7.0 + ((2.5 - voltage) / 0.18);
+  int rawValue = analogRead(PH_PIN);
+  float voltage = rawValue * 3.3 / 4095.0;
+  
+  // pH 7 = 2.5V (midpoint)
+  // pH 4 = 3.0V (acid)
+  // pH 10 = 2.0V (base)
+  // Slope = -5.0 pH/V
+  
+  float pH = 7.0 + ((2.5 - voltage) * 5.0);
+  
+  // Constrain pH value to realistic range
+  pH = constrain(pH, 0.0, 14.0);
+  
+  return pH;
 }
 
 float measureWaterLevel() {
@@ -287,20 +277,46 @@ float measureWaterLevel() {
   float distance = duration * 0.034 / 2;
   
   // Convert distance to water level (assuming sensor is at top)
-  return RESERVOIR_HEIGHT - distance;
+  float level = RESERVOIR_HEIGHT - distance;
+  
+  // Constrain water level to realistic range
+  level = constrain(level, 0.0, RESERVOIR_HEIGHT);
+  
+  return level;
+}
+
+float calculateVPD(float temp, float hum) {
+  // Saturated Vapor Pressure (es) = 0.6108 * exp((17.27 * T)/(T + 237.3))
+  float es = 0.6108 * exp((17.27 * temp)/(temp + 237.3));
+  
+  // Actual Vapor Pressure (ea) = es * (RH/100)
+  float ea = es * (hum/100.0);
+  
+  // VPD = es - ea
+  float vpd = es - ea;
+  
+  // Convert to kPa and constrain to realistic range
+  vpd = constrain(vpd, 0.0, 5.0);
+  
+  return vpd;
 }
 
 float calculateReservoirVolume(float waterLevel) {
   // Calculate volume of cylinder (πr²h)
-  return PI * pow(RESERVOIR_RADIUS, 2) * waterLevel / 1000.0; // Convert to liters
+  float volume = PI * pow(RESERVOIR_RADIUS, 2) * waterLevel / 1000.0; // Convert to liters
+  
+  // Constrain volume to realistic range
+  volume = constrain(volume, 0.0, PI * pow(RESERVOIR_RADIUS, 2) * RESERVOIR_HEIGHT / 1000.0);
+  
+  return volume;
 }
 
 void handleVPDControl(unsigned long currentTime) {
   if (currentTime - lastVPDCycleTime >= vpdCycleInterval * 1000) {
-    float vpd = calculateVPD(sht31.readTemperature(), sht31.readHumidity());
-    Serial.printf("VPD Check: %.2f kPa\n", vpd);
+    float currentVpd = vpd;  // Use the global VPD value
+    Serial.printf("VPD Check: %.2f kPa\n", currentVpd);
     
-    if (vpd > 1.2) {
+    if (currentVpd > 1.2) {
       Serial.println("VPD too high, activating misting...");
       digitalWrite(VPD_PUMP_RELAY, HIGH);
       delay(VPD_PUMP_DURATION);
@@ -314,7 +330,7 @@ void handleVPDControl(unsigned long currentTime) {
 
 void handlePHControl(unsigned long currentTime) {
   if (currentTime - lastpHCheckTime >= PH_CHECK_INTERVAL) {
-    float ph = readpH();
+    float ph = pH;  // Use the global pH value
     Serial.printf("pH Check: %.2f\n", ph);
     
     if (ph < PH_LOWER_LIMIT) {
@@ -354,6 +370,18 @@ void checkLightAndRotate(unsigned long currentTime) {
     }
     
     lastRotationTime = currentTime;
+  }
+}
+
+void checkReservoirVolume(unsigned long currentTime) {
+  if (currentTime - lastReservoirCheckTime >= RESERVOIR_CHECK_INTERVAL) {
+    float currentVolume = reservoirVolume;  // Use the global volume value
+    
+    if (currentVolume < 1000) {  // Less than 1 liter
+      Serial.println("Warning: Low reservoir volume!");
+    }
+    
+    lastReservoirCheckTime = currentTime;
   }
 }
 
@@ -406,8 +434,4 @@ void reconnectMQTT() {
       delay(5000);
     }
   }
-}
-
-void checkReservoirVolume(unsigned long currentTime) {
-  // Implement reservoir volume check logic here
 }
