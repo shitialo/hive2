@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react';
 import mqtt from 'mqtt';
 
 export const useMQTT = (brokerUrl, username, password, topic) => {
-  const [client, setClient] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState(null);
   const [data, setData] = useState([]);
@@ -61,17 +60,14 @@ export const useMQTT = (brokerUrl, username, password, topic) => {
         setError('MQTT client is offline');
       });
 
-      setClient(mqttClient);
-
       return () => {
-        if (mqttClient) {
-          console.log('Cleaning up MQTT client');
-          mqttClient.end();
-        }
+        console.log('Cleaning up MQTT client');
+        mqttClient.end();
       };
     } catch (err) {
       console.error('Failed to create MQTT client:', err);
       setError('Failed to create MQTT client');
+      return () => {}; // Return empty cleanup function if connection fails
     }
   }, [brokerUrl, username, password, topic]);
 
