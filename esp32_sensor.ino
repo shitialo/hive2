@@ -1,20 +1,47 @@
 #include <WiFi.h>
 #include <Wire.h>
+#include <math.h>
+#include <AccelStepper.h>
 #include <Adafruit_SHT31.h>
 #include <ArduinoJson.h>
 #include <PubSubClient.h>
 #include <WiFiClientSecure.h>
 
-// WiFi credentials
+// Pin Definitions for ESP32-S3
+#define PH_PIN 1          
+#define VPD_PUMP_RELAY 19  
+#define ACID_PUMP_RELAY 21 
+#define BASE_PUMP_RELAY 20 
+#define MIX_PUMP_RELAY 5  
+#define TRIG_PIN 13        
+#define ECHO_PIN 14        
+#define LDR_PIN 8         
+#define STEPPER_STEP_PIN 4 
+#define STEPPER_DIR_PIN 5  
+
+// Constants
+#define VPD_PUMP_DURATION 5000
+#define MIX_PUMP_DURATION 1000
+#define PH_CHECK_INTERVAL 30000
+#define PH_WAIT_INTERVAL 18000
+#define PH_LOWER_LIMIT 5.5
+#define PH_UPPER_LIMIT 6.5
+#define DOSAGE_RATE 0.00025
+#define RESERVOIR_RADIUS 20.0
+#define RESERVOIR_HEIGHT 35.0
+#define RESERVOIR_CHECK_INTERVAL 3600
+#define ROTATION_INTERVAL 5000
+#define STEPS_PER_REVOLUTION 200
+#define STEPS_90_DEGREES (STEPS_PER_REVOLUTION / 4)
+
+// WiFi and MQTT credentials
 const char* ssid = "Tbag";
 const char* password = "Dbcooper";
-
-// HiveMQ credentials
 const char* mqtt_server = "7d79ddcf8af4477491bd13dfe5fa8ba8.s1.eu.hivemq.cloud";
 const int mqtt_port = 8883;
 const char* mqtt_username = "admin";
 const char* mqtt_password = "Admin123";
-const char* mqtt_topic = "sensor/sht31";
+const char* mqtt_topic = "hydroponic/data";
 
 // Root CA Certificate for HiveMQ
 const char* root_ca = R"(-----BEGIN CERTIFICATE-----
@@ -49,54 +76,142 @@ mRGunUHBcnWEvgJBQl9nJEiU0Zsnvgc/ubhPgXRR4Xq37Z0j4r7g1SgEEzwxA57d
 emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 -----END CERTIFICATE-----)";
 
+// Global objects
+Adafruit_SHT31 sht31 = Adafruit_SHT31();
+AccelStepper stepper(AccelStepper::DRIVER, STEPPER_STEP_PIN, STEPPER_DIR_PIN);
 WiFiClientSecure espClient;
 PubSubClient client(espClient);
-Adafruit_SHT31 sht31 = Adafruit_SHT31();
+
+// Global variables
+unsigned long lastVPDCycleTime = 0;
+unsigned long vpdCycleInterval = 120;
+unsigned long lastpHCheckTime = 0;
+unsigned long lastReservoirCheckTime = 0;
+unsigned long lastRotationTime = 0;
+unsigned long lastPublishTime = 0;
+
+bool isVPDPumping = false;
+bool isPHAdjusting = false;
+bool isPHWaiting = false;
+
+float temperature = 0.0;
+float humidity = 0.0;
+float vpd = 0.0;
+float pH = 0.0;
+float waterLevel = 0.0;
+float reservoirVolume = 0.0;
+int lightIntensity = 0;
+float PH_TARGET = 6.0;
 
 void setup() {
   Serial.begin(115200);
   Wire.begin(41, 42);
-  Serial.println("Starting setup...");
+  
+  // Initialize pins
+  pinMode(VPD_PUMP_RELAY, OUTPUT);
+  pinMode(ACID_PUMP_RELAY, OUTPUT);
+  pinMode(BASE_PUMP_RELAY, OUTPUT);
+  pinMode(MIX_PUMP_RELAY, OUTPUT);
+  pinMode(TRIG_PIN, OUTPUT);
+  pinMode(ECHO_PIN, INPUT);
+  
+  digitalWrite(VPD_PUMP_RELAY, LOW);
+  digitalWrite(ACID_PUMP_RELAY, LOW);
+  digitalWrite(BASE_PUMP_RELAY, LOW);
+  digitalWrite(MIX_PUMP_RELAY, HIGH);
   
   // Initialize SHT31
   if (!sht31.begin(0x44)) {
     Serial.println("Couldn't find SHT31");
     while (1) delay(1);
   }
-  Serial.println("SHT31 initialized");
+  
+  // Initialize stepper
+  stepper.setMaxSpeed(1000);
+  stepper.setAcceleration(500);
 
+  // Initialize ADC
+  analogReadResolution(12);
+
+  // Configure SSL and MQTT
+  espClient.setCACert(root_ca);
+  client.setServer(mqtt_server, mqtt_port);
+  
   // Connect to WiFi
   connectToWiFi();
+}
 
-  // Configure SSL/TLS
-  espClient.setCACert(root_ca);
+void loop() {
+  if (!client.connected()) {
+    reconnectMQTT();
+  }
+  client.loop();
 
-  // Configure MQTT
-  client.setServer(mqtt_server, mqtt_port);
-  client.setCallback(callback);
+  unsigned long currentTime = millis();
+  
+  // Read all sensors
+  readSensors();
+  
+  // Control systems
+  handleVPDControl(currentTime);
+  handlePHControl(currentTime);
+  checkReservoirVolume(currentTime);
+  checkLightAndRotate(currentTime);
+  
+  // Run stepper if needed
+  stepper.run();
+  
+  // Publish data every 5 seconds
+  if (currentTime - lastPublishTime >= 5000) {
+    publishData();
+    lastPublishTime = currentTime;
+  }
+}
+
+void readSensors() {
+  temperature = sht31.readTemperature();
+  humidity = sht31.readHumidity();
+  vpd = calculateVPD(temperature, humidity);
+  pH = readpH();
+  waterLevel = measureWaterLevel();
+  reservoirVolume = calculateReservoirVolume(waterLevel);
+  lightIntensity = analogRead(LDR_PIN);
+}
+
+void publishData() {
+  StaticJsonDocument<512> doc;
+  
+  doc["temperature"] = temperature;
+  doc["humidity"] = humidity;
+  doc["vpd"] = vpd;
+  doc["pH"] = pH;
+  doc["waterLevel"] = waterLevel;
+  doc["reservoirVolume"] = reservoirVolume;
+  doc["lightIntensity"] = lightIntensity;
+  doc["isVPDPumping"] = isVPDPumping;
+  doc["isPHAdjusting"] = isPHAdjusting;
+  doc["timestamp"] = millis();
+  
+  String jsonString;
+  serializeJson(doc, jsonString);
+  
+  client.publish(mqtt_topic, jsonString.c_str());
 }
 
 void connectToWiFi() {
   Serial.printf("Connecting to WiFi %s\n", ssid);
   WiFi.begin(ssid, password);
   
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
+  while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
-    attempts++;
   }
   
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi connected");
-    Serial.printf("IP address: %s\n", WiFi.localIP().toString().c_str());
-  } else {
-    Serial.println("\nWiFi connection failed");
-    ESP.restart();
-  }
+  Serial.println("\nWiFi connected");
+  Serial.printf("IP address: %s\n", WiFi.localIP().toString().c_str());
 }
 
-void reconnect() {
+void reconnectMQTT() {
   while (!client.connected()) {
     Serial.print("Attempting MQTT connection...");
     String clientId = "ESP32Client-" + String(random(0xffff), HEX);
@@ -111,42 +226,44 @@ void reconnect() {
   }
 }
 
-void callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("Message arrived [");
-  Serial.print(topic);
-  Serial.print("] ");
-  for (int i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
-  }
-  Serial.println();
+float calculateVPD(float temperature, float humidity) {
+  float es = 0.6108 * exp(17.27 * temperature / (temperature + 237.3));
+  float ea = es * (humidity / 100.0);
+  return es - ea;
 }
 
-void loop() {
-  if (!client.connected()) {
-    reconnect();
-  }
-  client.loop();
+float readpH() {
+  int sensorValue = analogRead(PH_PIN);
+  return map(sensorValue, 0, 4095, 0, 14);
+}
 
-  static unsigned long lastTime = 0;
-  if (millis() - lastTime > 5000) {
-    float temp = sht31.readTemperature();
-    float hum = sht31.readHumidity();
+float measureWaterLevel() {
+  digitalWrite(TRIG_PIN, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN, LOW);
+  
+  long duration = pulseIn(ECHO_PIN, HIGH);
+  return duration * 0.034 / 2;
+}
 
-    if (!isnan(temp) && !isnan(hum)) {
-      StaticJsonDocument<200> doc;
-      doc["temperature"] = temp;
-      doc["humidity"] = hum;
-      doc["timestamp"] = millis();
+float calculateReservoirVolume(float waterLevel) {
+  return PI * pow(RESERVOIR_RADIUS, 2) * waterLevel;
+}
 
-      String jsonString;
-      serializeJson(doc, jsonString);
-      
-      Serial.printf("Publishing: %s\n", jsonString.c_str());
-      client.publish(mqtt_topic, jsonString.c_str());
-    } else {
-      Serial.println("Failed to read sensor");
-    }
-    
-    lastTime = millis();
-  }
-} 
+void handleVPDControl(unsigned long currentTime) {
+  // Implement VPD control logic here
+}
+
+void handlePHControl(unsigned long currentTime) {
+  // Implement pH control logic here
+}
+
+void checkReservoirVolume(unsigned long currentTime) {
+  // Implement reservoir volume check logic here
+}
+
+void checkLightAndRotate(unsigned long currentTime) {
+  // Implement light check and rotation logic here
+}
