@@ -1,6 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import mqtt from 'mqtt';
 
+const DATA_TIMEOUT = 10000; // 10 seconds timeout for data freshness
+
 export const useMQTT = (brokerUrl, username, password, topic) => {
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState(null);
@@ -15,10 +17,50 @@ export const useMQTT = (brokerUrl, username, password, topic) => {
     lightIntensity: null,
     vpdPumpRunning: false,
     phAdjusting: false,
+    lastUpdate: null,
+    status: 'No Data',
   });
 
   // Use ref to maintain data between renders
   const dataRef = useRef([]);
+  const timeoutRef = useRef(null);
+
+  // Function to clear readings
+  const clearReadings = useCallback(() => {
+    setCurrentReadings(prev => ({
+      temperature: null,
+      humidity: null,
+      vpd: null,
+      ph: null,
+      waterLevel: null,
+      reservoirVolume: null,
+      lightIntensity: null,
+      vpdPumpRunning: false,
+      phAdjusting: false,
+      lastUpdate: prev.lastUpdate,
+      status: 'No Data',
+    }));
+  }, []);
+
+  // Check data freshness
+  useEffect(() => {
+    const checkDataFreshness = () => {
+      const now = Date.now();
+      if (currentReadings.lastUpdate && (now - currentReadings.lastUpdate) > DATA_TIMEOUT) {
+        clearReadings();
+      }
+    };
+
+    // Set up interval to check data freshness
+    const interval = setInterval(checkDataFreshness, 1000);
+
+    return () => {
+      clearInterval(interval);
+      if (timeoutRef.current) {
+        clearTimeout(timeoutRef.current);
+      }
+    };
+  }, [currentReadings.lastUpdate, clearReadings]);
 
   const connect = useCallback(() => {
     try {
@@ -50,11 +92,13 @@ export const useMQTT = (brokerUrl, username, password, topic) => {
         console.error('MQTT error:', err);
         setError('Failed to connect to MQTT broker');
         setIsConnected(false);
+        clearReadings();
       });
 
       mqttClient.on('offline', () => {
         console.log('MQTT client offline');
         setIsConnected(false);
+        clearReadings();
       });
 
       mqttClient.on('message', (receivedTopic, message) => {
@@ -68,6 +112,8 @@ export const useMQTT = (brokerUrl, username, password, topic) => {
           const dataPoint = {
             ...parsedData,
             timestamp,
+            lastUpdate: Date.now(),
+            status: 'Active',
           };
           
           // Update current readings
@@ -83,6 +129,12 @@ export const useMQTT = (brokerUrl, username, password, topic) => {
           console.log('Data point added:', dataPoint);
           console.log('Total data points:', dataRef.current.length);
           
+          // Reset timeout
+          if (timeoutRef.current) {
+            clearTimeout(timeoutRef.current);
+          }
+          timeoutRef.current = setTimeout(clearReadings, DATA_TIMEOUT);
+          
         } catch (err) {
           console.error('Error parsing message:', err);
           setError('Failed to parse sensor data');
@@ -97,7 +149,7 @@ export const useMQTT = (brokerUrl, username, password, topic) => {
       console.error('MQTT connection error:', err);
       setError('Failed to establish MQTT connection');
     }
-  }, [brokerUrl, username, password, topic]);
+  }, [brokerUrl, username, password, topic, clearReadings]);
 
   useEffect(() => {
     const cleanup = connect();
