@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import mqtt from 'mqtt';
 
 export const useMQTT = (brokerUrl, username, password, topic) => {
@@ -17,10 +17,12 @@ export const useMQTT = (brokerUrl, username, password, topic) => {
     phAdjusting: false,
   });
 
+  // Use ref to maintain data between renders
+  const dataRef = useRef([]);
+
   const connect = useCallback(() => {
     try {
       console.log('Connecting to MQTT broker:', brokerUrl);
-      console.log('Topic:', topic);
       
       const mqttClient = mqtt.connect(brokerUrl, {
         username,
@@ -55,19 +57,14 @@ export const useMQTT = (brokerUrl, username, password, topic) => {
         setIsConnected(false);
       });
 
-      mqttClient.on('reconnect', () => {
-        console.log('Attempting to reconnect to MQTT broker');
-      });
-
       mqttClient.on('message', (receivedTopic, message) => {
         try {
           const parsedData = JSON.parse(message.toString());
-          console.log('Received data:', parsedData);
           
-          // Ensure timestamp is in milliseconds
+          // Convert timestamp to milliseconds if needed
           const timestamp = parsedData.timestamp * (parsedData.timestamp < 1000000000000 ? 1000 : 1);
           
-          // Create data point with proper timestamp
+          // Create data point
           const dataPoint = {
             ...parsedData,
             timestamp,
@@ -76,12 +73,16 @@ export const useMQTT = (brokerUrl, username, password, topic) => {
           // Update current readings
           setCurrentReadings(dataPoint);
           
-          // Update historical data
-          setData(prevData => {
-            const newData = [...prevData, dataPoint];
-            // Keep last 1000 readings
-            return newData.slice(-1000).sort((a, b) => a.timestamp - b.timestamp);
-          });
+          // Update historical data using ref
+          dataRef.current = [...dataRef.current, dataPoint]
+            .sort((a, b) => a.timestamp - b.timestamp)
+            .slice(-1000); // Keep last 1000 readings
+          
+          // Update state with new data array
+          setData([...dataRef.current]);
+          
+          console.log('Data point added:', dataPoint);
+          console.log('Total data points:', dataRef.current.length);
           
         } catch (err) {
           console.error('Error parsing message:', err);
@@ -109,7 +110,7 @@ export const useMQTT = (brokerUrl, username, password, topic) => {
   return {
     isConnected,
     error,
-    data,
+    data: dataRef.current, // Return current data from ref
     currentReadings,
   };
 };
