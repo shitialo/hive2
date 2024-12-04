@@ -1,102 +1,159 @@
 import React from 'react';
-import { Grid, Paper, Typography } from '@mui/material';
-import { useTheme } from '@mui/material/styles';
-import { useFirebase } from '../hooks/useFirebase';
 import PropTypes from 'prop-types';
+import { Grid, Paper, Typography, Box } from '@mui/material';
+import {
+  ThermostatAuto,
+  WaterDrop,
+  Opacity,
+  Science,
+  WbSunny,
+  Speed,
+  Warning,
+} from '@mui/icons-material';
 
-const SensorReadings = () => {
-  const theme = useTheme();
-  const { sensorData, systemStatus } = useFirebase();
+const ReadingCard = ({ title, value, unit, icon: Icon, color = 'primary', precision = 1 }) => (
+  <Grid item xs={12} sm={6} md={4}>
+    <Paper sx={{ p: 2, display: 'flex', alignItems: 'center', gap: 2 }}>
+      <Icon sx={{ fontSize: 40, color: `${color}.main` }} />
+      <Box>
+        <Typography variant="subtitle1" color="text.secondary">
+          {title}
+        </Typography>
+        <Typography variant="h4">
+          {typeof value === 'number'
+            ? `${Number(value).toFixed(precision)}${unit}`
+            : typeof value === 'string'
+            ? value
+            : '--'}
+        </Typography>
+      </Box>
+    </Paper>
+  </Grid>
+);
 
-  if (!sensorData) {
-    return (
-      <Paper sx={{ p: 2, height: '100%' }}>
-        <Typography>Loading sensor data...</Typography>
-      </Paper>
-    );
+ReadingCard.propTypes = {
+  title: PropTypes.string.isRequired,
+  value: PropTypes.oneOfType([PropTypes.number, PropTypes.string]),
+  unit: PropTypes.string,
+  icon: PropTypes.elementType.isRequired,
+  color: PropTypes.string,
+  precision: PropTypes.number,
+};
+
+const SensorReadings = ({ data }) => {
+  if (!data) {
+    return null;
   }
 
-  const isDataStale = sensorData.status === 'timeout';
+  const {
+    temperature,
+    humidity,
+    vpd,
+    ph,
+    waterLevel,
+    reservoirVolume,
+    lightIntensity,
+    vpdPumpRunning,
+    phAdjusting,
+    status,
+  } = data;
 
-  const readings = [
-    { label: 'Temperature', value: sensorData.temperature?.toFixed(1) || 'N/A', unit: '°C' },
-    { label: 'Humidity', value: sensorData.humidity?.toFixed(1) || 'N/A', unit: '%' },
-    { label: 'VPD', value: sensorData.vpd?.toFixed(2) || 'N/A', unit: 'kPa' },
-    { label: 'pH', value: sensorData.ph?.toFixed(2) || 'N/A', unit: '' },
-    { label: 'Water Level', value: sensorData.waterLevel?.toFixed(1) || 'N/A', unit: 'cm' },
-    { label: 'Reservoir Volume', value: sensorData.reservoirVolume?.toFixed(1) || 'N/A', unit: 'L' },
-    { label: 'Light Intensity', value: sensorData.lightIntensity || 'N/A', unit: '' }
-  ];
+  // Define warning thresholds
+  const isVpdWarning = vpd > 1.2 || vpd < 0.8;
+  const isPhWarning = ph > 6.5 || ph < 5.5;
+  const isWaterLevelWarning = waterLevel < 10;
 
-  const getStatusColor = (reading) => {
-    if (isDataStale) return theme.palette.error.main;
-    
-    switch (reading.label) {
-      case 'Temperature':
-        return sensorData.temperature > 30 || sensorData.temperature < 20 
-          ? theme.palette.warning.main 
-          : theme.palette.success.main;
-      case 'Humidity':
-        return sensorData.humidity > 80 || sensorData.humidity < 40
-          ? theme.palette.warning.main
-          : theme.palette.success.main;
-      case 'pH':
-        return sensorData.ph > 6.5 || sensorData.ph < 5.5
-          ? theme.palette.warning.main
-          : theme.palette.success.main;
-      case 'Water Level':
-        return sensorData.waterLevel < 10
-          ? theme.palette.error.main
-          : theme.palette.success.main;
-      default:
-        return theme.palette.success.main;
-    }
+  // Calculate system status color
+  const getStatusColor = () => {
+    if (status === 'No Data') return 'error';
+    if (vpdPumpRunning || phAdjusting) return 'warning';
+    return 'success';
+  };
+
+  // Calculate system status text
+  const getStatusText = () => {
+    if (status === 'No Data') return 'No Data';
+    if (vpdPumpRunning) return 'VPD Adjusting';
+    if (phAdjusting) return 'pH Adjusting';
+    return 'Normal';
   };
 
   return (
-    <Paper sx={{ p: 2, height: '100%' }}>
-      <Typography variant="h6" gutterBottom>
-        Sensor Readings {isDataStale && <span style={{ color: theme.palette.error.main }}>(Stale)</span>}
-      </Typography>
-      <Grid container spacing={2}>
-        {readings.map((reading) => (
-          <Grid item xs={6} sm={4} md={3} key={reading.label}>
-            <Paper 
-              elevation={3} 
-              sx={{ 
-                p: 2, 
-                textAlign: 'center',
-                borderLeft: 3,
-                borderColor: getStatusColor(reading)
-              }}
-            >
-              <Typography variant="subtitle2" color="textSecondary">
-                {reading.label}
-              </Typography>
-              <Typography variant="h6">
-                {reading.value} {reading.unit}
-              </Typography>
-            </Paper>
-          </Grid>
-        ))}
-      </Grid>
-      {systemStatus && (
-        <Typography 
-          variant="body2" 
-          color="textSecondary" 
-          sx={{ mt: 2 }}
-        >
-          System Status: {systemStatus.status}
-          {systemStatus.vpdPumpRunning && ' | VPD Pump Active'}
-          {systemStatus.phAdjusting && ' | pH Adjusting'}
-        </Typography>
-      )}
-    </Paper>
+    <Grid container spacing={3}>
+      <ReadingCard
+        title="Temperature"
+        value={temperature}
+        unit="°C"
+        icon={ThermostatAuto}
+        color={status === 'No Data' ? 'error' : 'primary'}
+      />
+      <ReadingCard
+        title="Humidity"
+        value={humidity}
+        unit="%"
+        icon={WaterDrop}
+        color={status === 'No Data' ? 'error' : 'primary'}
+      />
+      <ReadingCard
+        title="VPD"
+        value={vpd}
+        unit=" kPa"
+        icon={Opacity}
+        color={status === 'No Data' ? 'error' : isVpdWarning ? 'warning' : 'success'}
+      />
+      <ReadingCard
+        title="pH Level"
+        value={ph}
+        unit=""
+        icon={Science}
+        color={status === 'No Data' ? 'error' : isPhWarning ? 'warning' : 'success'}
+        precision={2}
+      />
+      <ReadingCard
+        title="Water Level"
+        value={waterLevel}
+        unit=" cm"
+        icon={Speed}
+        color={status === 'No Data' ? 'error' : isWaterLevelWarning ? 'warning' : 'success'}
+      />
+      <ReadingCard
+        title="Reservoir Volume"
+        value={reservoirVolume}
+        unit=" L"
+        icon={Speed}
+        color={status === 'No Data' ? 'error' : 'primary'}
+      />
+      <ReadingCard
+        title="Light Intensity"
+        value={lightIntensity}
+        unit=" lux"
+        icon={WbSunny}
+        color={status === 'No Data' ? 'error' : 'primary'}
+      />
+      <ReadingCard
+        title="System Status"
+        value={getStatusText()}
+        unit=""
+        icon={Warning}
+        color={getStatusColor()}
+      />
+    </Grid>
   );
 };
 
 SensorReadings.propTypes = {
-  theme: PropTypes.object
+  data: PropTypes.shape({
+    temperature: PropTypes.number,
+    humidity: PropTypes.number,
+    vpd: PropTypes.number,
+    ph: PropTypes.number,
+    waterLevel: PropTypes.number,
+    reservoirVolume: PropTypes.number,
+    lightIntensity: PropTypes.number,
+    vpdPumpRunning: PropTypes.bool,
+    phAdjusting: PropTypes.bool,
+    status: PropTypes.string,
+  }),
 };
 
-export default SensorReadings;
+export { SensorReadings };
