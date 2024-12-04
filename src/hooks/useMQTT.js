@@ -4,7 +4,7 @@ import mqtt from 'mqtt';
 export const useMQTT = (brokerUrl, username, password, topic) => {
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState(null);
-  const [data, setData] = useState([]);
+  const [historicalData, setHistoricalData] = useState([]);
   const [currentReadings, setCurrentReadings] = useState({
     temperature: null,
     humidity: null,
@@ -73,13 +73,12 @@ export const useMQTT = (brokerUrl, username, password, topic) => {
           // Update current readings
           setCurrentReadings(dataPoint);
           
-          // Update historical data using ref
+          // Update historical data using ref and state
           dataRef.current = [...dataRef.current, dataPoint]
             .sort((a, b) => a.timestamp - b.timestamp)
             .slice(-1000); // Keep last 1000 readings
           
-          // Update state with new data array
-          setData([...dataRef.current]);
+          setHistoricalData(dataRef.current);
           
           console.log('Data point added:', dataPoint);
           console.log('Total data points:', dataRef.current.length);
@@ -110,7 +109,7 @@ export const useMQTT = (brokerUrl, username, password, topic) => {
   return {
     isConnected,
     error,
-    data: dataRef.current, // Return current data from ref
+    data: historicalData,
     currentReadings,
   };
 };
