@@ -1,130 +1,98 @@
-import React from 'react';
-import PropTypes from 'prop-types';
+import React, { useState } from 'react';
 import {
-  Grid,
   Paper,
   Typography,
-  Switch,
-  FormControlLabel,
+  Slider,
   Button,
-  Box,
+  Grid,
+  FormControlLabel,
+  Switch,
 } from '@mui/material';
-import {
-  WaterDrop,
-  Science,
-  PlayArrow,
-  Stop,
-  Settings,
-} from '@mui/icons-material';
+import { useFirebase } from '../hooks/useFirebase';
 
-const ControlButton = ({ label, icon: Icon, onClick, color = 'primary', disabled }) => (
-  <Button
-    variant="contained"
-    color={color}
-    onClick={onClick}
-    disabled={disabled}
-    startIcon={<Icon />}
-    sx={{ width: '100%', mt: 1 }}
-  >
-    {label}
-  </Button>
-);
+const ControlPanel = () => {
+  const { updateControlSettings } = useFirebase();
+  const [lightThreshold, setLightThreshold] = useState(500);
+  const [pHTarget, setPHTarget] = useState(6.0);
+  const [isUpdating, setIsUpdating] = useState(false);
 
-ControlButton.propTypes = {
-  label: PropTypes.string.isRequired,
-  icon: PropTypes.elementType.isRequired,
-  onClick: PropTypes.func.isRequired,
-  color: PropTypes.string,
-  disabled: PropTypes.bool,
-};
+  const handleLightThresholdChange = (event, newValue) => {
+    setLightThreshold(newValue);
+  };
 
-const ControlSection = ({ title, children }) => (
-  <Grid item xs={12} sm={6} md={4}>
+  const handlePHTargetChange = (event, newValue) => {
+    setPHTarget(newValue);
+  };
+
+  const handleUpdate = async () => {
+    setIsUpdating(true);
+    try {
+      await updateControlSettings({
+        lightThreshold,
+        pHTarget,
+        lightThresholdUpdate: true,
+        pHTargetUpdate: true
+      });
+    } catch (error) {
+      console.error('Failed to update settings:', error);
+    }
+    setIsUpdating(false);
+  };
+
+  return (
     <Paper sx={{ p: 2 }}>
       <Typography variant="h6" gutterBottom>
-        {title}
+        Control Panel
       </Typography>
-      {children}
-    </Paper>
-  </Grid>
-);
-
-ControlSection.propTypes = {
-  title: PropTypes.string.isRequired,
-  children: PropTypes.node.isRequired,
-};
-
-export const ControlPanel = ({
-  autoMode,
-  pumpRunning,
-  phAdjustment,
-  onAutoModeToggle,
-  onStartPump,
-  onStopPump,
-  onStartPhAdjustment,
-  onStopPhAdjustment,
-  onCalibrateSensors,
-}) => (
-  <Grid container spacing={3}>
-    <ControlSection title="Operation Mode">
-      <FormControlLabel
-        control={
-          <Switch
-            checked={autoMode}
-            onChange={onAutoModeToggle}
-            color="primary"
+      <Grid container spacing={3}>
+        <Grid item xs={12}>
+          <Typography gutterBottom>
+            Light Threshold: {lightThreshold}
+          </Typography>
+          <Slider
+            value={lightThreshold}
+            onChange={handleLightThresholdChange}
+            min={0}
+            max={1000}
+            step={10}
+            marks={[
+              { value: 0, label: '0' },
+              { value: 500, label: '500' },
+              { value: 1000, label: '1000' },
+            ]}
           />
-        }
-        label={autoMode ? "Automatic Mode" : "Manual Mode"}
-      />
-    </ControlSection>
-
-    <ControlSection title="Pump Control">
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-        <ControlButton
-          label={pumpRunning ? "Stop Pump" : "Start Pump"}
-          icon={pumpRunning ? Stop : PlayArrow}
-          onClick={pumpRunning ? onStopPump : onStartPump}
-          color={pumpRunning ? "error" : "success"}
-          disabled={autoMode}
-        />
-        <Typography variant="caption" color="text.secondary">
-          {autoMode ? "Pump control disabled in auto mode" : "Manual pump control active"}
-        </Typography>
-      </Box>
-    </ControlSection>
-
-    <ControlSection title="pH Control">
-      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
-        <ControlButton
-          label={phAdjustment ? "Stop pH Adjustment" : "Start pH Adjustment"}
-          icon={Science}
-          onClick={phAdjustment ? onStopPhAdjustment : onStartPhAdjustment}
-          color={phAdjustment ? "error" : "success"}
-          disabled={autoMode}
-        />
-      </Box>
-    </ControlSection>
-
-    <ControlSection title="System Maintenance">
-      <ControlButton
-        label="Calibrate Sensors"
-        icon={Settings}
-        onClick={onCalibrateSensors}
-        color="info"
-      />
-    </ControlSection>
-  </Grid>
-);
-
-ControlPanel.propTypes = {
-  autoMode: PropTypes.bool.isRequired,
-  pumpRunning: PropTypes.bool.isRequired,
-  phAdjustment: PropTypes.bool.isRequired,
-  onAutoModeToggle: PropTypes.func.isRequired,
-  onStartPump: PropTypes.func.isRequired,
-  onStopPump: PropTypes.func.isRequired,
-  onStartPhAdjustment: PropTypes.func.isRequired,
-  onStopPhAdjustment: PropTypes.func.isRequired,
-  onCalibrateSensors: PropTypes.func.isRequired,
+        </Grid>
+        <Grid item xs={12}>
+          <Typography gutterBottom>
+            pH Target: {pHTarget.toFixed(1)}
+          </Typography>
+          <Slider
+            value={pHTarget}
+            onChange={handlePHTargetChange}
+            min={5.0}
+            max={7.0}
+            step={0.1}
+            marks={[
+              { value: 5.0, label: '5.0' },
+              { value: 6.0, label: '6.0' },
+              { value: 7.0, label: '7.0' },
+            ]}
+          />
+        </Grid>
+        <Grid item xs={12}>
+          <Button
+            variant="contained"
+            color="primary"
+            onClick={handleUpdate}
+            disabled={isUpdating}
+            fullWidth
+          >
+            {isUpdating ? 'Updating...' : 'Update Settings'}
+          </Button>
+        </Grid>
+      </Grid>
+    </Paper>
+  );
 };
+
+export default ControlPanel;

@@ -1,5 +1,4 @@
-import React, { useState } from 'react';
-import PropTypes from 'prop-types';
+import React, { useState, useEffect } from 'react';
 import {
   LineChart,
   Line,
@@ -8,183 +7,115 @@ import {
   CartesianGrid,
   Tooltip,
   Legend,
-  ResponsiveContainer,
+  ResponsiveContainer
 } from 'recharts';
-import {
-  Paper,
-  ToggleButton,
-  ToggleButtonGroup,
-  Typography,
-  Box,
-  Stack,
-} from '@mui/material';
+import { Paper, Typography, FormControl, InputLabel, Select, MenuItem } from '@mui/material';
+import { useTheme } from '@mui/material/styles';
+import { useFirebase } from '../hooks/useFirebase';
 
-const timeRanges = {
-  '5M': 300000,
-  '15M': 900000,
-  '1H': 3600000,
-  '6H': 21600000,
-};
+const SensorChart = () => {
+  const theme = useTheme();
+  const { getHistoricalData } = useFirebase();
+  const [chartData, setChartData] = useState([]);
+  const [timeRange, setTimeRange] = useState(3600000); // 1 hour in milliseconds
 
-const metrics = {
-  temperature: { color: '#ff4444', label: 'Temperature (°C)' },
-  humidity: { color: '#33b5e5', label: 'Humidity (%)' },
-  vpd: { color: '#8884d8', label: 'VPD (kPa)' },
-  ph: { color: '#82ca9d', label: 'pH' },
-  waterLevel: { color: '#ffc658', label: 'Water Level (cm)' },
-  reservoirVolume: { color: '#ff7300', label: 'Reservoir Volume (L)' },
-  lightIntensity: { color: '#0088fe', label: 'Light Intensity (lux)' },
-};
+  useEffect(() => {
+    const fetchData = async () => {
+      const data = await getHistoricalData(timeRange);
+      setChartData(data);
+    };
 
-export const SensorChart = ({ data }) => {
-  const [timeRange, setTimeRange] = useState('15M');
-  const [selectedMetrics, setSelectedMetrics] = useState(['temperature', 'humidity', 'vpd']);
+    fetchData();
+    const interval = setInterval(fetchData, 10000); // Update every 10 seconds
 
-  const handleTimeRangeChange = (event, newRange) => {
-    if (newRange !== null) {
-      setTimeRange(newRange);
-    }
+    return () => clearInterval(interval);
+  }, [timeRange, getHistoricalData]);
+
+  const handleTimeRangeChange = (event) => {
+    setTimeRange(event.target.value);
   };
-
-  const handleMetricToggle = (event, newMetrics) => {
-    if (newMetrics.length) {
-      setSelectedMetrics(newMetrics);
-    }
-  };
-
-  const filterData = () => {
-    if (!data || !Array.isArray(data) || data.length === 0) {
-      console.log('No data available');
-      return [];
-    }
-    
-    const now = Date.now();
-    const cutoff = now - timeRanges[timeRange];
-    
-    const filteredData = data
-      .filter(point => {
-        if (!point || typeof point.timestamp !== 'number') {
-          console.log('Invalid data point:', point);
-          return false;
-        }
-        return point.timestamp > cutoff;
-      })
-      .map(point => ({
-        ...point,
-        timestamp: point.timestamp,
-      }))
-      .sort((a, b) => a.timestamp - b.timestamp);
-    
-    console.log(`Filtered ${filteredData.length} data points`);
-    return filteredData;
-  };
-
-  const formatValue = (value, metric) => {
-    if (typeof value !== 'number') return '--';
-    return value.toFixed(2);
-  };
-
-  const filteredData = filterData();
 
   return (
-    <Paper sx={{ p: 2 }}>
-      <Stack spacing={2}>
-        <Typography variant="h6">
-          Sensor Readings Over Time
-        </Typography>
-        
-        <Stack direction="row" spacing={2} alignItems="center">
-          <Typography variant="subtitle1" sx={{ minWidth: 100 }}>
-            Time Range:
-          </Typography>
-          <ToggleButtonGroup
-            value={timeRange}
-            exclusive
-            onChange={handleTimeRangeChange}
-            size="small"
-          >
-            {Object.entries(timeRanges).map(([range]) => (
-              <ToggleButton key={range} value={range}>
-                {range}
-              </ToggleButton>
-            ))}
-          </ToggleButtonGroup>
-        </Stack>
-
-        <Stack direction="row" spacing={2} alignItems="center">
-          <Typography variant="subtitle1" sx={{ minWidth: 100 }}>
-            Metrics:
-          </Typography>
-          <ToggleButtonGroup
-            value={selectedMetrics}
-            onChange={handleMetricToggle}
-            size="small"
-            multiple
-          >
-            {Object.entries(metrics).map(([key, { label }]) => (
-              <ToggleButton key={key} value={key}>
-                {label}
-              </ToggleButton>
-            ))}
-          </ToggleButtonGroup>
-        </Stack>
-
-        {filteredData.length === 0 ? (
-          <Typography color="text.secondary" sx={{ py: 8, textAlign: 'center' }}>
-            No data available for the selected time range
-          </Typography>
-        ) : (
-          <Box sx={{ height: 400, width: '100%' }}>
-            <ResponsiveContainer>
-              <LineChart data={filteredData}>
-                <CartesianGrid strokeDasharray="3 3" />
-                <XAxis
-                  dataKey="timestamp"
-                  type="number"
-                  scale="time"
-                  domain={['dataMin', 'dataMax']}
-                  tickFormatter={(ts) => new Date(ts).toLocaleTimeString()}
-                />
-                <YAxis />
-                <Tooltip
-                  labelFormatter={(ts) => new Date(ts).toLocaleString()}
-                  formatter={(value, name) => [
-                    formatValue(value, name),
-                    metrics[name]?.label || name,
-                  ]}
-                />
-                <Legend />
-                {selectedMetrics.map((metric) => (
-                  <Line
-                    key={metric}
-                    type="monotone"
-                    dataKey={metric}
-                    stroke={metrics[metric].color}
-                    dot={false}
-                    activeDot={{ r: 4 }}
-                    isAnimationActive={false}
-                  />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
-          </Box>
-        )}
-      </Stack>
+    <Paper sx={{ p: 2, height: '100%' }}>
+      <Typography variant="h6" gutterBottom>
+        Sensor History
+      </Typography>
+      <FormControl sx={{ mb: 2, minWidth: 120 }}>
+        <InputLabel>Time Range</InputLabel>
+        <Select
+          value={timeRange}
+          label="Time Range"
+          onChange={handleTimeRangeChange}
+        >
+          <MenuItem value={900000}>15 Minutes</MenuItem>
+          <MenuItem value={1800000}>30 Minutes</MenuItem>
+          <MenuItem value={3600000}>1 Hour</MenuItem>
+          <MenuItem value={7200000}>2 Hours</MenuItem>
+          <MenuItem value={14400000}>4 Hours</MenuItem>
+          <MenuItem value={28800000}>8 Hours</MenuItem>
+        </Select>
+      </FormControl>
+      <ResponsiveContainer width="100%" height={400}>
+        <LineChart
+          data={chartData}
+          margin={{
+            top: 5,
+            right: 30,
+            left: 20,
+            bottom: 5,
+          }}
+        >
+          <CartesianGrid strokeDasharray="3 3" />
+          <XAxis
+            dataKey="timestamp"
+            tickFormatter={(unixTime) => new Date(unixTime * 1000).toLocaleTimeString()}
+          />
+          <YAxis yAxisId="left" />
+          <YAxis yAxisId="right" orientation="right" />
+          <Tooltip
+            labelFormatter={(unixTime) => new Date(unixTime * 1000).toLocaleString()}
+            contentStyle={{
+              backgroundColor: theme.palette.background.paper,
+              border: `1px solid ${theme.palette.divider}`,
+            }}
+          />
+          <Legend />
+          <Line
+            yAxisId="left"
+            type="monotone"
+            dataKey="temperature"
+            stroke={theme.palette.primary.main}
+            name="Temperature (°C)"
+            dot={false}
+          />
+          <Line
+            yAxisId="left"
+            type="monotone"
+            dataKey="humidity"
+            stroke={theme.palette.secondary.main}
+            name="Humidity (%)"
+            dot={false}
+          />
+          <Line
+            yAxisId="right"
+            type="monotone"
+            dataKey="vpd"
+            stroke={theme.palette.success.main}
+            name="VPD (kPa)"
+            dot={false}
+          />
+          <Line
+            yAxisId="right"
+            type="monotone"
+            dataKey="ph"
+            stroke={theme.palette.warning.main}
+            name="pH"
+            dot={false}
+          />
+        </LineChart>
+      </ResponsiveContainer>
     </Paper>
   );
 };
 
-SensorChart.propTypes = {
-  data: PropTypes.arrayOf(
-    PropTypes.shape({
-      timestamp: PropTypes.number.isRequired,
-      temperature: PropTypes.number,
-      humidity: PropTypes.number,
-      vpd: PropTypes.number,
-      ph: PropTypes.number,
-      waterLevel: PropTypes.number,
-      reservoirVolume: PropTypes.number,
-      lightIntensity: PropTypes.number,
-    })
-  ),
-};
+export default SensorChart;
