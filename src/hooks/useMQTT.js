@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import mqtt from 'mqtt';
 
-export const useMQTT = () => {
+export const useMQTT = (brokerUrl, username, password, topic) => {
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState(null);
   const [historicalData, setHistoricalData] = useState([]);
@@ -63,7 +63,6 @@ export const useMQTT = () => {
       mqttClient.on('offline', () => {
         console.log('MQTT client offline');
         setIsConnected(false);
-        clearReadings();
       });
 
       mqttClient.on('message', (receivedTopic, message) => {
@@ -106,7 +105,6 @@ export const useMQTT = () => {
       console.error('MQTT connection error:', err);
       setError('Failed to establish MQTT connection');
     }
-  }, [clearReadings]);
   }, [brokerUrl, username, password, topic]);
 
   useEffect(() => {
