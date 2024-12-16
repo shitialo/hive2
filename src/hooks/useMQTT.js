@@ -78,20 +78,35 @@ export const useMQTT = () => {
         username,
         password,
         protocol: 'wss',
+        port: 8884,
+        path: '/mqtt',
         reconnectPeriod: 5000,
         keepalive: 60,
-        rejectUnauthorized: false, // Add this to bypass SSL certificate validation if needed
-        clientId: `hydroponic_dashboard_${Math.random().toString(16).slice(2, 10)}`, // Add unique client ID
+        clientId: `hydroponic_dashboard_${Math.random().toString(16).slice(2, 10)}`,
+        
+        // Additional connection options for better reliability
+        clean: true,
+        connectTimeout: 10000,
+        
+        // SSL/TLS options
+        rejectUnauthorized: false,
+        
+        // WebSocket specific options
+        transformWsUrl: (url) => {
+          // Ensure the URL is properly formatted for WebSocket
+          return url.replace('wss://', 'wss://');
+        }
       });
 
       mqttClient.on('connect', () => {
-        console.log('Connected to MQTT broker');
+        console.log('Connected to MQTT broker successfully');
         setIsConnected(true);
         setError(null);
+        
         mqttClient.subscribe(topic, (err) => {
           if (err) {
             console.error('Subscription error:', err);
-            setError('Failed to subscribe to topic');
+            setError(`Failed to subscribe to topic: ${err.message}`);
           } else {
             console.log('Subscribed to:', topic);
           }
@@ -100,15 +115,22 @@ export const useMQTT = () => {
 
       mqttClient.on('error', (err) => {
         console.error('MQTT connection error:', err);
-        setError(`MQTT Connection Error: ${err.message}`);
+        setError(`MQTT Connection Error: ${err.message || 'Unknown error'}`);
         setIsConnected(false);
         clearReadings();
       });
 
       mqttClient.on('offline', () => {
-        console.log('MQTT client offline');
+        console.log('MQTT client went offline');
         setIsConnected(false);
-        setError('MQTT broker is offline');
+        setError('MQTT broker connection lost. Attempting to reconnect...');
+        clearReadings();
+      });
+
+      mqttClient.on('close', () => {
+        console.log('MQTT connection closed');
+        setIsConnected(false);
+        setError('MQTT connection closed unexpectedly');
         clearReadings();
       });
 
@@ -154,11 +176,11 @@ export const useMQTT = () => {
 
       return () => {
         console.log('Cleaning up MQTT connection');
-        mqttClient.end();
+        mqttClient.end(true);
       };
     } catch (err) {
       console.error('MQTT connection setup error:', err);
-      setError('Failed to establish MQTT connection');
+      setError(`Failed to establish MQTT connection: ${err.message}`);
     }
   }, [clearReadings]);
 
