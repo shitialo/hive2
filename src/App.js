@@ -17,9 +17,9 @@ function App() {
     data,
     currentReadings,
   } = useMQTT(
-    process.env.REACT_APP_MQTT_URL,
-    process.env.REACT_APP_MQTT_USERNAME,
-    process.env.REACT_APP_MQTT_PASSWORD,
+    `${process.env.REACT_APP_MQTT_URL}`, 
+    `${process.env.REACT_APP_MQTT_USERNAME}`, 
+    `${process.env.REACT_APP_MQTT_PASSWORD}`, 
     'hydroponic/data' // Updated to match ESP32's topic
   );
 
@@ -28,9 +28,9 @@ function App() {
     isConnected: statusConnected,
     data: statusData,
   } = useMQTT(
-    process.env.REACT_APP_MQTT_URL,
-    process.env.REACT_APP_MQTT_USERNAME,
-    process.env.REACT_APP_MQTT_PASSWORD,
+    `${process.env.REACT_APP_MQTT_URL}`, 
+    `${process.env.REACT_APP_MQTT_USERNAME}`, 
+    `${process.env.REACT_APP_MQTT_PASSWORD}`, 
     'hydroponic/status'
   );
 

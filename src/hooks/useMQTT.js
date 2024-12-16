@@ -3,7 +3,7 @@ import mqtt from 'mqtt';
 
 const DATA_TIMEOUT = 10000; // 10 seconds timeout for data freshness
 
-export const useMQTT = (brokerUrl, username, password, topic) => {
+export const useMQTT = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState(null);
   const [historicalData, setHistoricalData] = useState([]);
@@ -64,6 +64,11 @@ export const useMQTT = (brokerUrl, username, password, topic) => {
 
   const connect = useCallback(() => {
     try {
+      const brokerUrl = process.env.REACT_APP_MQTT_BROKER_URL;
+      const username = process.env.REACT_APP_MQTT_USERNAME;
+      const password = process.env.REACT_APP_MQTT_PASSWORD;
+      const topic = process.env.REACT_APP_MQTT_TOPIC;
+
       console.log('Connecting to MQTT broker:', brokerUrl);
       
       const mqttClient = mqtt.connect(brokerUrl, {
@@ -72,6 +77,8 @@ export const useMQTT = (brokerUrl, username, password, topic) => {
         protocol: 'wss',
         reconnectPeriod: 5000,
         keepalive: 60,
+        rejectUnauthorized: false, // Add this to bypass SSL certificate validation if needed
+        clientId: `hydroponic_dashboard_${Math.random().toString(16).slice(2, 10)}`, // Add unique client ID
       });
 
       mqttClient.on('connect', () => {
@@ -89,8 +96,8 @@ export const useMQTT = (brokerUrl, username, password, topic) => {
       });
 
       mqttClient.on('error', (err) => {
-        console.error('MQTT error:', err);
-        setError('Failed to connect to MQTT broker');
+        console.error('MQTT connection error:', err);
+        setError(`MQTT Connection Error: ${err.message}`);
         setIsConnected(false);
         clearReadings();
       });
@@ -98,6 +105,7 @@ export const useMQTT = (brokerUrl, username, password, topic) => {
       mqttClient.on('offline', () => {
         console.log('MQTT client offline');
         setIsConnected(false);
+        setError('MQTT broker is offline');
         clearReadings();
       });
 
@@ -146,10 +154,10 @@ export const useMQTT = (brokerUrl, username, password, topic) => {
         mqttClient.end();
       };
     } catch (err) {
-      console.error('MQTT connection error:', err);
+      console.error('MQTT connection setup error:', err);
       setError('Failed to establish MQTT connection');
     }
-  }, [brokerUrl, username, password, topic, clearReadings]);
+  }, [clearReadings]);
 
   useEffect(() => {
     const cleanup = connect();
