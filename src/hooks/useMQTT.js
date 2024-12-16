@@ -1,8 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import mqtt from 'mqtt';
 
-const DATA_TIMEOUT = 10000; // 10 seconds timeout for data freshness
-
 export const useMQTT = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [error, setError] = useState(null);
@@ -17,50 +15,10 @@ export const useMQTT = () => {
     lightIntensity: null,
     vpdPumpRunning: false,
     phAdjusting: false,
-    lastUpdate: null,
-    status: 'No Data',
   });
 
   // Use ref to maintain data between renders
   const dataRef = useRef([]);
-  const timeoutRef = useRef(null);
-
-  // Function to clear readings
-  const clearReadings = useCallback(() => {
-    setCurrentReadings(prev => ({
-      temperature: null,
-      humidity: null,
-      vpd: null,
-      ph: null,
-      waterLevel: null,
-      reservoirVolume: null,
-      lightIntensity: null,
-      vpdPumpRunning: false,
-      phAdjusting: false,
-      lastUpdate: prev.lastUpdate,
-      status: 'No Data',
-    }));
-  }, []);
-
-  // Check data freshness
-  useEffect(() => {
-    const checkDataFreshness = () => {
-      const now = Date.now();
-      if (currentReadings.lastUpdate && (now - currentReadings.lastUpdate) > DATA_TIMEOUT) {
-        clearReadings();
-      }
-    };
-
-    // Set up interval to check data freshness
-    const interval = setInterval(checkDataFreshness, 1000);
-
-    return () => {
-      clearInterval(interval);
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current);
-      }
-    };
-  }, [currentReadings.lastUpdate, clearReadings]);
 
   const connect = useCallback(() => {
     try {
@@ -78,35 +36,18 @@ export const useMQTT = () => {
         username,
         password,
         protocol: 'wss',
-        port: 8884,
-        path: '/mqtt',
         reconnectPeriod: 5000,
         keepalive: 60,
-        clientId: `hydroponic_dashboard_${Math.random().toString(16).slice(2, 10)}`,
-        
-        // Additional connection options for better reliability
-        clean: true,
-        connectTimeout: 10000,
-        
-        // SSL/TLS options
-        rejectUnauthorized: false,
-        
-        // WebSocket specific options
-        transformWsUrl: (url) => {
-          // Ensure the URL is properly formatted for WebSocket
-          return url.replace('wss://', 'wss://');
-        }
       });
 
       mqttClient.on('connect', () => {
-        console.log('Connected to MQTT broker successfully');
+        console.log('Connected to MQTT broker');
         setIsConnected(true);
         setError(null);
-        
         mqttClient.subscribe(topic, (err) => {
           if (err) {
             console.error('Subscription error:', err);
-            setError(`Failed to subscribe to topic: ${err.message}`);
+            setError('Failed to subscribe to topic');
           } else {
             console.log('Subscribed to:', topic);
           }
@@ -114,23 +55,14 @@ export const useMQTT = () => {
       });
 
       mqttClient.on('error', (err) => {
-        console.error('MQTT connection error:', err);
-        setError(`MQTT Connection Error: ${err.message || 'Unknown error'}`);
+        console.error('MQTT error:', err);
+        setError('Failed to connect to MQTT broker');
         setIsConnected(false);
-        clearReadings();
       });
 
       mqttClient.on('offline', () => {
-        console.log('MQTT client went offline');
+        console.log('MQTT client offline');
         setIsConnected(false);
-        setError('MQTT broker connection lost. Attempting to reconnect...');
-        clearReadings();
-      });
-
-      mqttClient.on('close', () => {
-        console.log('MQTT connection closed');
-        setIsConnected(false);
-        setError('MQTT connection closed unexpectedly');
         clearReadings();
       });
 
@@ -145,8 +77,6 @@ export const useMQTT = () => {
           const dataPoint = {
             ...parsedData,
             timestamp,
-            lastUpdate: Date.now(),
-            status: 'Active',
           };
           
           // Update current readings
@@ -162,12 +92,6 @@ export const useMQTT = () => {
           console.log('Data point added:', dataPoint);
           console.log('Total data points:', dataRef.current.length);
           
-          // Reset timeout
-          if (timeoutRef.current) {
-            clearTimeout(timeoutRef.current);
-          }
-          timeoutRef.current = setTimeout(clearReadings, DATA_TIMEOUT);
-          
         } catch (err) {
           console.error('Error parsing message:', err);
           setError('Failed to parse sensor data');
@@ -176,13 +100,14 @@ export const useMQTT = () => {
 
       return () => {
         console.log('Cleaning up MQTT connection');
-        mqttClient.end(true);
+        mqttClient.end();
       };
     } catch (err) {
-      console.error('MQTT connection setup error:', err);
-      setError(`Failed to establish MQTT connection: ${err.message}`);
+      console.error('MQTT connection error:', err);
+      setError('Failed to establish MQTT connection');
     }
   }, [clearReadings]);
+  }, [brokerUrl, username, password, topic]);
 
   useEffect(() => {
     const cleanup = connect();

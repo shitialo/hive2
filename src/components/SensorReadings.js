@@ -55,7 +55,6 @@ const SensorReadings = ({ data }) => {
     lightIntensity,
     vpdPumpRunning,
     phAdjusting,
-    status,
   } = data;
 
   // Define warning thresholds
@@ -63,20 +62,12 @@ const SensorReadings = ({ data }) => {
   const isPhWarning = ph > 6.5 || ph < 5.5;
   const isWaterLevelWarning = waterLevel < 10;
 
-  // Calculate system status color
-  const getStatusColor = () => {
-    if (status === 'No Data') return 'error';
-    if (vpdPumpRunning || phAdjusting) return 'warning';
-    return 'success';
-  };
-
-  // Calculate system status text
-  const getStatusText = () => {
-    if (status === 'No Data') return 'No Data';
-    if (vpdPumpRunning) return 'VPD Adjusting';
-    if (phAdjusting) return 'pH Adjusting';
-    return 'Normal';
-  };
+  // Calculate system status
+  const systemStatus = vpdPumpRunning 
+    ? "VPD Adjusting" 
+    : phAdjusting 
+    ? "pH Adjusting" 
+    : "Normal";
 
   return (
     <Grid container spacing={3}>
@@ -85,28 +76,26 @@ const SensorReadings = ({ data }) => {
         value={temperature}
         unit="°C"
         icon={ThermostatAuto}
-        color={status === 'No Data' ? 'error' : 'primary'}
       />
       <ReadingCard
         title="Humidity"
         value={humidity}
         unit="%"
         icon={WaterDrop}
-        color={status === 'No Data' ? 'error' : 'primary'}
       />
       <ReadingCard
         title="VPD"
         value={vpd}
         unit=" kPa"
         icon={Opacity}
-        color={status === 'No Data' ? 'error' : isVpdWarning ? 'warning' : 'success'}
+        color={isVpdWarning ? 'error' : 'success'}
       />
       <ReadingCard
         title="pH Level"
         value={ph}
         unit=""
         icon={Science}
-        color={status === 'No Data' ? 'error' : isPhWarning ? 'warning' : 'success'}
+        color={isPhWarning ? 'error' : 'success'}
         precision={2}
       />
       <ReadingCard
@@ -114,28 +103,26 @@ const SensorReadings = ({ data }) => {
         value={waterLevel}
         unit=" cm"
         icon={Speed}
-        color={status === 'No Data' ? 'error' : isWaterLevelWarning ? 'warning' : 'success'}
+        color={isWaterLevelWarning ? 'warning' : 'success'}
       />
       <ReadingCard
         title="Reservoir Volume"
         value={reservoirVolume}
         unit=" L"
         icon={Speed}
-        color={status === 'No Data' ? 'error' : 'primary'}
       />
       <ReadingCard
         title="Light Intensity"
         value={lightIntensity}
         unit=" lux"
         icon={WbSunny}
-        color={status === 'No Data' ? 'error' : 'primary'}
       />
       <ReadingCard
         title="System Status"
-        value={getStatusText()}
+        value={systemStatus}
         unit=""
         icon={Warning}
-        color={getStatusColor()}
+        color={systemStatus !== "Normal" ? 'warning' : 'success'}
       />
     </Grid>
   );
@@ -152,7 +139,6 @@ SensorReadings.propTypes = {
     lightIntensity: PropTypes.number,
     vpdPumpRunning: PropTypes.bool,
     phAdjusting: PropTypes.bool,
-    status: PropTypes.string,
   }),
 };
 
