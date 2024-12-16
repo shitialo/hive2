@@ -67,9 +67,12 @@ export const useMQTT = () => {
       const brokerUrl = process.env.REACT_APP_MQTT_BROKER_URL;
       const username = process.env.REACT_APP_MQTT_USERNAME;
       const password = process.env.REACT_APP_MQTT_PASSWORD;
-      const topic = process.env.REACT_APP_MQTT_TOPIC;
+      const topic = window.location.pathname.includes('status') 
+        ? process.env.REACT_APP_MQTT_TOPIC_STATUS 
+        : process.env.REACT_APP_MQTT_TOPIC_DATA;
 
       console.log('Connecting to MQTT broker:', brokerUrl);
+      console.log('Using topic:', topic);
       
       const mqttClient = mqtt.connect(brokerUrl, {
         username,

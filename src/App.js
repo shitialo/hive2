@@ -16,28 +16,18 @@ function App() {
     error,
     data,
     currentReadings,
-  } = useMQTT(
-    `${process.env.REACT_APP_MQTT_URL}`, 
-    `${process.env.REACT_APP_MQTT_USERNAME}`, 
-    `${process.env.REACT_APP_MQTT_PASSWORD}`, 
-    'hydroponic/data' // Updated to match ESP32's topic
-  );
+  } = useMQTT();
 
   // Subscribe to status messages as well
   const {
     isConnected: statusConnected,
     data: statusData,
-  } = useMQTT(
-    `${process.env.REACT_APP_MQTT_URL}`, 
-    `${process.env.REACT_APP_MQTT_USERNAME}`, 
-    `${process.env.REACT_APP_MQTT_PASSWORD}`, 
-    'hydroponic/status'
-  );
+  } = useMQTT();
 
   if (error) {
     return (
       <Box sx={{ p: 3 }}>
-        <Typography color="error">Error: {error.message}</Typography>
+        <Typography color="error">Error: {error}</Typography>
       </Box>
     );
   }
